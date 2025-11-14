@@ -1,0 +1,14 @@
+# Requirements pour Book Detector
+
+ultralytics>=8.2.0
+streamlit>=1.28.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+pandas>=2.0.0
+Pillow>=10.0.0
+supervision>=0.21.0
+httpx>=0.25.0
+certifi>=2023.7.22
+openai>=1.0.0
+torch>=2.0.0
+torchvision>=0.15.0
