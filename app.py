@@ -1200,36 +1200,6 @@ def main():
         else:
             ocr_results = [{"title": "", "author": "", "publisher": "", "lines": []} for _ in crops_raw]
         
-        progress_bar.progress(90)
-        
-        # ================== AJOUT : Matching avec le stock ==================
-        matches = []
-        if stock_df is not None and ocr_enabled:
-            with st.spinner("🔎 Matching avec le stock..."):
-                for ocr_data in ocr_results:
-                    match_row, score = match_book(
-                        ocr_data.get('title', ''),
-                        ocr_data.get('author', ''),
-                        ocr_data.get('publisher', ''),
-                        stock_df,
-                        match_threshold
-                    )
-                    
-                    if match_row is not None:
-                        status = 'found'
-                    elif score >= 40:
-                        status = 'uncertain'
-                    else:
-                        status = 'notfound'
-                    
-                    matches.append({
-                        'match': match_row,
-                        'score': score,
-                        'status': status
-                    })
-        else:
-            matches = [{'match': None, 'score': 0, 'status': 'notfound'} for _ in ocr_results]
-        
         progress_bar.progress(100)
         time.sleep(0.3)
         progress_bar.empty()
@@ -1237,155 +1207,150 @@ def main():
         # Résultats
         st.success(f"🎉 {len(crops_raw)} livre(s) détecté(s) !")
         
-        # ================== AJOUT : Métriques avec matching ==================
-        found_count = sum(1 for m in matches if m['status'] == 'found')
-        uncertain_count = sum(1 for m in matches if m['status'] == 'uncertain')
-        notfound_count = sum(1 for m in matches if m['status'] == 'notfound')
+        # Métriques
+        col1, col2, col3, col4 = st.columns(4)
         
-        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric("📚 Détectés", len(crops_raw))
+            st.metric("📚 Livres", len(crops_raw))
         with col2:
-            st.metric("✅ Trouvés", found_count)
+            st.metric("📖 Titres", sum(1 for r in ocr_results if r.get("title")))
         with col3:
-            st.metric("⚠️ Incertains", uncertain_count)
+            st.metric("✍️ Auteurs", sum(1 for r in ocr_results if r.get("author")))
         with col4:
-            st.metric("❌ Introuvables", notfound_count)
-        with col5:
-            st.metric("📖 Titres OCR", sum(1 for r in ocr_results if r.get("title")))
+            st.metric("🏢 Éditeurs", sum(1 for r in ocr_results if r.get("publisher")))
         
         st.divider()
         
-        # ================== AJOUT : Tabs avec matching ==================
+        # ================== TABS (mode original + ajout recherche stock) ==================
         if stock_df is not None:
-            tabs = st.tabs(["📸 Image", "✅ Trouvés", "⚠️ Incertains", "❌ Introuvables", "📚 Liste OCR", "💾 Export"])
-            
-            with tabs[0]:
-                st.subheader("Image avec détections")
-                st.image(cv2.cvtColor(image_annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
-            
-            with tabs[1]:
-                st.subheader(f"✅ Livres trouvés dans le stock ({found_count})")
-                for idx, (item, ocr_data, match_data) in enumerate(zip(crops_raw, ocr_results, matches), start=1):
-                    if match_data['status'] != 'found':
-                        continue
-                    match = match_data['match']
-                    with st.expander(f"📖 #{idx} - {ocr_data.get('title') or '(inconnu)'} - Score: {match_data['score']:.0f}%"):
-                        col_img, col_info = st.columns([1, 3])
-                        with col_img:
-                            st.image(cv2.cvtColor(item["crop"], cv2.COLOR_BGR2RGB))
-                        with col_info:
-                            st.markdown(f"**Code:** `{match['Code article']}`")
-                            st.markdown(f"**Titre:** {match['Titre']}")
-                            st.markdown(f"**Auteur:** {match['Auteur']}")
-                            st.markdown(f"**Éditeur:** {match['Editeur']}")
-                            qty = match['Qté']
-                            if qty > 5:
-                                st.success(f"✅ En stock ({qty})")
-                            elif qty > 0:
-                                st.warning(f"⚠️ Stock faible ({qty})")
-                            else:
-                                st.error("❌ Rupture")
-            
-            with tabs[2]:
-                st.subheader(f"⚠️ Correspondances incertaines ({uncertain_count})")
-                for idx, (item, ocr_data, match_data) in enumerate(zip(crops_raw, ocr_results, matches), start=1):
-                    if match_data['status'] != 'uncertain':
-                        continue
-                    with st.expander(f"📖 #{idx} - Score: {match_data['score']:.0f}%"):
-                        col_img, col_info = st.columns([1, 2])
-                        with col_img:
-                            st.image(cv2.cvtColor(item["crop"], cv2.COLOR_BGR2RGB))
-                        with col_info:
-                            st.markdown(f"**OCR:** {ocr_data.get('title')} - {ocr_data.get('author')}")
-                            st.caption("Vérification manuelle recommandée")
-            
-            with tabs[3]:
-                st.subheader(f"❌ Livres non trouvés ({notfound_count})")
-                for idx, (item, ocr_data, match_data) in enumerate(zip(crops_raw, ocr_results, matches), start=1):
-                    if match_data['status'] != 'notfound':
-                        continue
-                    with st.expander(f"📖 #{idx} - {ocr_data.get('title') or '(inconnu)'}"):
-                        col_img, col_info = st.columns([1, 2])
-                        with col_img:
-                            st.image(cv2.cvtColor(item["crop"], cv2.COLOR_BGR2RGB))
-                        with col_info:
-                            st.markdown(f"**Titre:** {ocr_data.get('title') or '(vide)'}")
-                            st.markdown(f"**Auteur:** {ocr_data.get('author') or '(vide)'}")
-            
-            with tabs[4]:
-                st.subheader("Liste OCR complète")
-                for idx, (item, ocr_data) in enumerate(zip(crops_raw, ocr_results), start=1):
-                    with st.expander(f"📖 #{idx} - {ocr_data.get('title') or '(inconnu)'}"):
-                        col_img, col_info = st.columns([1, 2])
-                        with col_img:
-                            st.image(cv2.cvtColor(item["crop"], cv2.COLOR_BGR2RGB))
-                        with col_info:
-                            st.markdown(f"**Titre:** {ocr_data.get('title') or '*(inconnu)*'}")
-                            st.markdown(f"**Auteur:** {ocr_data.get('author') or '*(inconnu)*'}")
-                            st.markdown(f"**Éditeur:** {ocr_data.get('publisher') or '*(inconnu)*'}")
-            
-            with tabs[5]:
-                st.subheader("Export avec matching")
-                df_data = []
-                for idx, (item, ocr_data, match_data) in enumerate(zip(crops_raw, ocr_results, matches), start=1):
-                    row = {
-                        "#": idx,
-                        "OCR_Titre": ocr_data.get('title', ''),
-                        "OCR_Auteur": ocr_data.get('author', ''),
-                        "Status": match_data['status'],
-                        "Score": f"{match_data['score']:.1f}%",
-                    }
-                    if match_data['match'] is not None:
-                        m = match_data['match']
-                        row.update({
-                            "Stock_Code": m['Code article'],
-                            "Stock_Titre": m['Titre'],
-                            "Stock_Auteur": m['Auteur'],
-                            "Stock_Qté": m['Qté']
-                        })
-                    df_data.append(row)
-                
-                df = pd.DataFrame(df_data)
-                st.dataframe(df, use_container_width=True)
-                
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 CSV", csv, "livres_stock.csv", "text/csv")
+            tabs = st.tabs(["📸 Image annotée", "📚 Liste détaillée", "📊 Tableau", "🔍 Recherche Stock", "💾 Export"])
         else:
-            # Version sans matching (originale)
-            tabs = st.tabs(["📸 Image", "📚 Liste", "📊 Tableau", "💾 Export"])
-            
-            with tabs[0]:
-                st.subheader("Image avec détections")
-                st.image(cv2.cvtColor(image_annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
-            
-            with tabs[1]:
-                st.subheader("Liste des livres détectés")
-                for idx, (item, ocr_data) in enumerate(zip(crops_raw, ocr_results), start=1):
-                    with st.expander(f"📖 Livre #{idx} - {ocr_data.get('title') or '(inconnu)'}"):
-                        col_img, col_info = st.columns([1, 2])
-                        with col_img:
-                            st.image(cv2.cvtColor(item["crop"], cv2.COLOR_BGR2RGB))
-                        with col_info:
-                            st.markdown(f"**Titre:** {ocr_data.get('title') or '*(inconnu)*'}")
-                            st.markdown(f"**Auteur:** {ocr_data.get('author') or '*(inconnu)*'}")
-                            st.markdown(f"**Éditeur:** {ocr_data.get('publisher') or '*(inconnu)*'}")
-            
-            with tabs[2]:
-                df_data = []
-                for idx, (item, ocr_data) in enumerate(zip(crops_raw, ocr_results), start=1):
-                    df_data.append({
-                        "#": idx,
-                        "Titre": ocr_data.get('title') or '(inconnu)',
-                        "Auteur": ocr_data.get('author') or '(inconnu)',
-                        "Éditeur": ocr_data.get('publisher') or '(inconnu)',
-                    })
-                df = pd.DataFrame(df_data)
-                st.dataframe(df, use_container_width=True)
-            
+            tabs = st.tabs(["📸 Image annotée", "📚 Liste détaillée", "📊 Tableau", "💾 Export"])
+        
+        with tabs[0]:
+            st.subheader("Image avec détections")
+            st.image(cv2.cvtColor(image_annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
+        
+        with tabs[1]:
+            st.subheader("Liste des livres détectés")
+            for idx, (item, ocr_data) in enumerate(zip(crops_raw, ocr_results), start=1):
+                with st.expander(f"📖 Livre #{idx} - {ocr_data.get('title') or '(inconnu)'}"):
+                    col_img, col_info = st.columns([1, 2])
+                    with col_img:
+                        st.image(cv2.cvtColor(item["crop"], cv2.COLOR_BGR2RGB))
+                        st.caption(f"Confiance : {item['confidence']:.2%}")
+                    with col_info:
+                        st.markdown(f"**Titre:** {ocr_data.get('title') or '*(inconnu)*'}")
+                        st.markdown(f"**Auteur:** {ocr_data.get('author') or '*(inconnu)*'}")
+                        st.markdown(f"**Éditeur:** {ocr_data.get('publisher') or '*(inconnu)*'}")
+                        if ocr_data.get('lines'):
+                            st.markdown("**Lignes détectées:**")
+                            for line in ocr_data['lines'][:10]:
+                                st.text(f"  • {line}")
+        
+        with tabs[2]:
+            st.subheader("Vue tableau")
+            df_data = []
+            for idx, (item, ocr_data) in enumerate(zip(crops_raw, ocr_results), start=1):
+                df_data.append({
+                    "#": idx,
+                    "Titre": ocr_data.get('title') or '(inconnu)',
+                    "Auteur": ocr_data.get('author') or '(inconnu)',
+                    "Éditeur": ocr_data.get('publisher') or '(inconnu)',
+                    "Confiance": f"{item['confidence']:.2%}"
+                })
+            df = pd.DataFrame(df_data)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # ================== AJOUT : Onglet Recherche Stock ==================
+        if stock_df is not None:
             with tabs[3]:
+                st.subheader("🔍 Recherche dans le stock")
+                st.info("Cliquez sur un livre détecté pour chercher dans votre stock")
+                
+                # Sélection du livre
+                book_options = [f"#{i+1} - {ocr_results[i].get('title') or '(inconnu)'}" for i in range(len(ocr_results))]
+                selected = st.selectbox("Sélectionnez un livre détecté", book_options)
+                
+                if selected:
+                    book_idx = int(selected.split('#')[1].split(' -')[0]) - 1
+                    ocr_data = ocr_results[book_idx]
+                    
+                    col1, col2 = st.columns([1, 2])
+                    
+                    with col1:
+                        st.markdown("**📖 Données OCR**")
+                        st.text(f"Titre: {ocr_data.get('title') or '(vide)'}")
+                        st.text(f"Auteur: {ocr_data.get('author') or '(vide)'}")
+                        st.text(f"Éditeur: {ocr_data.get('publisher') or '(vide)'}")
+                        st.image(cv2.cvtColor(crops_raw[book_idx]["crop"], cv2.COLOR_BGR2RGB))
+                    
+                    with col2:
+                        st.markdown("**🔎 Résultats de recherche**")
+                        
+                        # Recherche
+                        match_row, score = match_book(
+                            ocr_data.get('title', ''),
+                            ocr_data.get('author', ''),
+                            ocr_data.get('publisher', ''),
+                            stock_df,
+                            threshold=0  # Seuil à 0 pour afficher même les mauvais matchs
+                        )
+                        
+                        if score > 0:
+                            # Afficher le meilleur match
+                            st.markdown(f"**Meilleur match (Score: {score:.0f}%)**")
+                            
+                            if score >= match_threshold:
+                                st.success("✅ Correspondance trouvée")
+                            elif score >= 40:
+                                st.warning("⚠️ Correspondance incertaine")
+                            else:
+                                st.error("❌ Score trop faible")
+                            
+                            if match_row is not None:
+                                st.markdown(f"**Code:** `{match_row['Code article']}`")
+                                st.markdown(f"**Titre:** {match_row['Titre']}")
+                                st.markdown(f"**Auteur:** {match_row['Auteur']}")
+                                st.markdown(f"**Éditeur:** {match_row['Editeur']}")
+                                
+                                qty = match_row['Qté']
+                                if qty > 5:
+                                    st.success(f"📦 En stock : {qty} exemplaires")
+                                elif qty > 0:
+                                    st.warning(f"📦 Stock faible : {qty} exemplaires")
+                                else:
+                                    st.error("📦 Rupture de stock")
+                                
+                                st.caption(f"Catégorie: {match_row['Nom Catégorie']}")
+                                st.caption(f"Distributeur: {match_row['Nom Distributeur']}")
+                        else:
+                            st.error("❌ Aucune correspondance trouvée")
+                            st.caption("L'OCR n'a pas extrait assez d'informations pour effectuer une recherche.")
+        
+        # Export
+        export_tab_idx = 4 if stock_df is not None else 3
+        with tabs[export_tab_idx]:
+            st.subheader("Exporter les résultats")
+            col_csv, col_json = st.columns(2)
+            
+            with col_csv:
                 csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 CSV", csv, "livres.csv", "text/csv")
+                st.download_button("📥 Télécharger CSV", csv, "livres.csv", "text/csv", key="csv_download")
+            
+            with col_json:
+                json_data = json.dumps([
+                    {
+                        "index": idx,
+                        "titre": ocr_data.get('title'),
+                        "auteur": ocr_data.get('author'),
+                        "editeur": ocr_data.get('publisher'),
+                        "confiance": float(item['confidence'])
+                    }
+                    for idx, (item, ocr_data) in enumerate(zip(crops_raw, ocr_results), start=1)
+                ], ensure_ascii=False, indent=2)
+                
+                st.download_button("📥 Télécharger JSON", json_data.encode('utf-8'), "livres.json", "application/json", key="json_download")
 
 
 if __name__ == "__main__":
