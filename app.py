@@ -591,6 +591,7 @@
 #         st.markdown("🚀 *Powered by YOLO + Scaleway OCR*")
 
 # -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 ================================================================================
 📚 BOOK DETECTOR - Application Streamlit
@@ -1265,68 +1266,242 @@ def main():
         # ================== AJOUT : Onglet Recherche Stock ==================
         if stock_df is not None:
             with tabs[3]:
-                st.subheader("🔍 Recherche dans le stock")
-                st.info("Cliquez sur un livre détecté pour chercher dans votre stock")
+                st.subheader(f"🔍 Recherche dans le stock ({len(stock_df):,} livres)")
+                
+                # Initialiser session state pour la sélection
+                if 'selected_book_idx' not in st.session_state:
+                    st.session_state.selected_book_idx = 0
                 
                 # Sélection du livre
                 book_options = [f"#{i+1} - {ocr_results[i].get('title') or '(inconnu)'}" for i in range(len(ocr_results))]
-                selected = st.selectbox("Sélectionnez un livre détecté", book_options)
+                selected = st.selectbox(
+                    "Sélectionnez un livre détecté",
+                    book_options,
+                    key='book_selector'
+                )
                 
-                if selected:
-                    book_idx = int(selected.split('#')[1].split(' -')[0]) - 1
-                    ocr_data = ocr_results[book_idx]
+                book_idx = int(selected.split('#')[1].split(' -')[0]) - 1
+                st.session_state.selected_book_idx = book_idx
+                
+                ocr_data = ocr_results[book_idx]
+                
+                st.divider()
+                
+                # Layout 2 colonnes : Image + Paramètres
+                col_left, col_right = st.columns([1, 2])
+                
+                with col_left:
+                    st.markdown("### 📖 Livre sélectionné")
+                    st.image(cv2.cvtColor(crops_raw[book_idx]["crop"], cv2.COLOR_BGR2RGB), use_column_width=True)
+                    st.caption(f"Confiance détection : {crops_raw[book_idx]['confidence']:.1%}")
+                
+                with col_right:
+                    st.markdown("### 📝 Données OCR extraites")
                     
-                    col1, col2 = st.columns([1, 2])
+                    # Afficher les données OCR
+                    ocr_title = ocr_data.get('title') or ''
+                    ocr_author = ocr_data.get('author') or ''
+                    ocr_publisher = ocr_data.get('publisher') or ''
                     
-                    with col1:
-                        st.markdown("**📖 Données OCR**")
-                        st.text(f"Titre: {ocr_data.get('title') or '(vide)'}")
-                        st.text(f"Auteur: {ocr_data.get('author') or '(vide)'}")
-                        st.text(f"Éditeur: {ocr_data.get('publisher') or '(vide)'}")
-                        st.image(cv2.cvtColor(crops_raw[book_idx]["crop"], cv2.COLOR_BGR2RGB))
+                    if ocr_title:
+                        st.info(f"**Titre :** {ocr_title}")
+                    else:
+                        st.warning("**Titre :** *(vide)*")
                     
-                    with col2:
-                        st.markdown("**🔎 Résultats de recherche**")
-                        
-                        # Recherche
-                        match_row, score = match_book(
-                            ocr_data.get('title', ''),
-                            ocr_data.get('author', ''),
-                            ocr_data.get('publisher', ''),
-                            stock_df,
-                            threshold=0  # Seuil à 0 pour afficher même les mauvais matchs
-                        )
-                        
-                        if score > 0:
-                            # Afficher le meilleur match
-                            st.markdown(f"**Meilleur match (Score: {score:.0f}%)**")
+                    if ocr_author:
+                        st.info(f"**Auteur :** {ocr_author}")
+                    else:
+                        st.warning("**Auteur :** *(vide)*")
+                    
+                    if ocr_publisher:
+                        st.info(f"**Éditeur :** {ocr_publisher}")
+                    else:
+                        st.caption("**Éditeur :** *(vide)*")
+                    
+                    # Options de recherche
+                    st.markdown("### 🎯 Critères de recherche")
+                    search_mode = st.radio(
+                        "Rechercher par :",
+                        ["Titre uniquement", "Auteur uniquement", "Titre + Auteur (recommandé)", "Tous les champs"],
+                        index=2,
+                        key='search_mode'
+                    )
+                    
+                    # Bouton de recherche
+                    search_button = st.button("🔍 Chercher dans le stock", type="primary", use_container_width=True)
+                
+                st.divider()
+                
+                # Recherche et affichage des résultats
+                if search_button:
+                    if not ocr_title and not ocr_author:
+                        st.error("❌ Impossible de rechercher : aucune donnée OCR extraite (titre et auteur vides)")
+                    else:
+                        with st.spinner("🔎 Recherche en cours..."):
+                            # Adapter les paramètres selon le mode
+                            search_title = ''
+                            search_author = ''
+                            search_publisher = ''
                             
-                            if score >= match_threshold:
-                                st.success("✅ Correspondance trouvée")
-                            elif score >= 40:
-                                st.warning("⚠️ Correspondance incertaine")
+                            if search_mode == "Titre uniquement":
+                                search_title = ocr_title
+                            elif search_mode == "Auteur uniquement":
+                                search_author = ocr_author
+                            elif search_mode == "Titre + Auteur (recommandé)":
+                                search_title = ocr_title
+                                search_author = ocr_author
+                            else:  # Tous les champs
+                                search_title = ocr_title
+                                search_author = ocr_author
+                                search_publisher = ocr_publisher
+                            
+                            # Rechercher Top 5
+                            results = []
+                            for _, row in stock_df.iterrows():
+                                stock_title = normalize_text(row['Titre'])
+                                stock_author = normalize_text(row['Auteur'])
+                                stock_publisher = normalize_text(row['Editeur'])
+                                
+                                # Calculer score selon mode
+                                score = 0
+                                
+                                if search_mode == "Titre uniquement" and search_title:
+                                    norm_title = normalize_text(search_title)
+                                    if norm_title:
+                                        score = max(
+                                            fuzz.ratio(norm_title, stock_title),
+                                            fuzz.partial_ratio(norm_title, stock_title),
+                                            fuzz.token_sort_ratio(norm_title, stock_title)
+                                        )
+                                
+                                elif search_mode == "Auteur uniquement" and search_author:
+                                    norm_author = normalize_text(search_author)
+                                    if norm_author:
+                                        score = max(
+                                            fuzz.ratio(norm_author, stock_author),
+                                            fuzz.token_set_ratio(norm_author, stock_author)
+                                        )
+                                
+                                elif search_mode == "Titre + Auteur (recommandé)":
+                                    title_score = 0
+                                    author_score = 0
+                                    
+                                    if search_title:
+                                        norm_title = normalize_text(search_title)
+                                        if norm_title:
+                                            title_score = max(
+                                                fuzz.ratio(norm_title, stock_title),
+                                                fuzz.partial_ratio(norm_title, stock_title),
+                                                fuzz.token_sort_ratio(norm_title, stock_title)
+                                            ) * 0.7
+                                    
+                                    if search_author:
+                                        norm_author = normalize_text(search_author)
+                                        if norm_author:
+                                            author_score = max(
+                                                fuzz.ratio(norm_author, stock_author),
+                                                fuzz.token_set_ratio(norm_author, stock_author)
+                                            ) * 0.3
+                                    
+                                    score = title_score + author_score
+                                
+                                else:  # Tous les champs
+                                    title_score = 0
+                                    author_score = 0
+                                    publisher_score = 0
+                                    
+                                    if search_title:
+                                        norm_title = normalize_text(search_title)
+                                        if norm_title:
+                                            title_score = max(
+                                                fuzz.ratio(norm_title, stock_title),
+                                                fuzz.partial_ratio(norm_title, stock_title),
+                                                fuzz.token_sort_ratio(norm_title, stock_title)
+                                            ) * 0.6
+                                    
+                                    if search_author:
+                                        norm_author = normalize_text(search_author)
+                                        if norm_author:
+                                            author_score = max(
+                                                fuzz.ratio(norm_author, stock_author),
+                                                fuzz.token_set_ratio(norm_author, stock_author)
+                                            ) * 0.3
+                                    
+                                    if search_publisher:
+                                        norm_publisher = normalize_text(search_publisher)
+                                        if norm_publisher:
+                                            publisher_score = fuzz.partial_ratio(norm_publisher, stock_publisher) * 0.1
+                                    
+                                    score = title_score + author_score + publisher_score
+                                
+                                # Ajouter si score > 30%
+                                if score >= 30:
+                                    results.append({
+                                        'score': score,
+                                        'row': row
+                                    })
+                            
+                            # Trier et garder Top 5
+                            results.sort(key=lambda x: x['score'], reverse=True)
+                            top_results = results[:5]
+                            
+                            # Afficher résultats
+                            st.markdown(f"### 📊 Résultats (Top {len(top_results)})")
+                            
+                            if not top_results:
+                                st.warning("⚠️ Aucun résultat trouvé (score > 30%)")
+                                st.caption("💡 Essayez un autre critère de recherche ou vérifiez les données OCR")
                             else:
-                                st.error("❌ Score trop faible")
-                            
-                            if match_row is not None:
-                                st.markdown(f"**Code:** `{match_row['Code article']}`")
-                                st.markdown(f"**Titre:** {match_row['Titre']}")
-                                st.markdown(f"**Auteur:** {match_row['Auteur']}")
-                                st.markdown(f"**Éditeur:** {match_row['Editeur']}")
-                                
-                                qty = match_row['Qté']
-                                if qty > 5:
-                                    st.success(f"📦 En stock : {qty} exemplaires")
-                                elif qty > 0:
-                                    st.warning(f"📦 Stock faible : {qty} exemplaires")
-                                else:
-                                    st.error("📦 Rupture de stock")
-                                
-                                st.caption(f"Catégorie: {match_row['Nom Catégorie']}")
-                                st.caption(f"Distributeur: {match_row['Nom Distributeur']}")
-                        else:
-                            st.error("❌ Aucune correspondance trouvée")
-                            st.caption("L'OCR n'a pas extrait assez d'informations pour effectuer une recherche.")
+                                for rank, result in enumerate(top_results, 1):
+                                    score = result['score']
+                                    row = result['row']
+                                    
+                                    # Déterminer le statut
+                                    if score >= 70:
+                                        status_icon = "✅"
+                                        status_color = "success"
+                                        status_text = "Excellente correspondance"
+                                    elif score >= 50:
+                                        status_icon = "⚠️"
+                                        status_color = "warning"
+                                        status_text = "Correspondance probable"
+                                    else:
+                                        status_icon = "❌"
+                                        status_color = "error"
+                                        status_text = "Correspondance faible"
+                                    
+                                    # Carte résultat
+                                    with st.expander(f"{status_icon} **#{rank}** - {row['Titre'][:50]}... - Score : **{score:.0f}%**", expanded=(rank==1)):
+                                        col_info, col_stock = st.columns([2, 1])
+                                        
+                                        with col_info:
+                                            st.markdown(f"**Code article :** `{row['Code article']}`")
+                                            st.markdown(f"**Titre :** {row['Titre']}")
+                                            st.markdown(f"**Auteur :** {row['Auteur']}")
+                                            st.markdown(f"**Éditeur :** {row['Editeur']}")
+                                            st.caption(f"**Catégorie :** {row['Nom Catégorie']}")
+                                            st.caption(f"**Distributeur :** {row['Nom Distributeur']}")
+                                        
+                                        with col_stock:
+                                            qty = row['Qté']
+                                            
+                                            if qty > 5:
+                                                st.metric("📦 Stock", qty, delta="Disponible", delta_color="normal")
+                                                st.success("✅ En stock")
+                                            elif qty > 0:
+                                                st.metric("📦 Stock", qty, delta="Faible", delta_color="inverse")
+                                                st.warning("⚠️ Stock faible")
+                                            else:
+                                                st.metric("📦 Stock", 0, delta="Rupture", delta_color="inverse")
+                                                st.error("❌ Rupture")
+                                            
+                                            # Badge score
+                                            if score >= 70:
+                                                st.success(f"Score : {score:.0f}%")
+                                            elif score >= 50:
+                                                st.warning(f"Score : {score:.0f}%")
+                                            else:
+                                                st.info(f"Score : {score:.0f}%")
         
         # Export
         export_tab_idx = 4 if stock_df is not None else 3
