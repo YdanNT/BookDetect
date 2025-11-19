@@ -640,7 +640,7 @@ SCW_API_KEY = "ae1d12c9-9fd6-434b-aeba-286e9b9702fa"
 SCW_BASE_URL = "https://api.scaleway.ai/v1"
 
 # Chemin du modèle YOLO
-MODEL_PATH = "models/best.pt"
+MODEL_PATH = "models/models\epoch_100_yolo12x-obb_new.pt"
 
 # ================== AJOUT : Fichier stock ==================
 STOCK_FILE = "Stock_20251030.xls"
