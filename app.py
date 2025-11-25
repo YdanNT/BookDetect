@@ -694,21 +694,26 @@ def main():
             with tabs[3]:
                 st.subheader(f"🔍 Recherche dans le stock ({len(stock_df):,} livres)")
                 
-                # Initialiser session state pour la sélection
-                if 'selected_book_idx' not in st.session_state:
-                    st.session_state.selected_book_idx = 0
+                # Sélection du livre avec index dans session_state
+                if 'selected_book_key' not in st.session_state:
+                    st.session_state.selected_book_key = 0
                 
-                # Sélection du livre
                 book_options = [f"#{i+1} - {ocr_results[i].get('title') or '(inconnu)'}" for i in range(len(ocr_results))]
+                
+                def on_book_change():
+                    # Callback pour mettre à jour la clé
+                    selected_text = st.session_state.book_selector_widget
+                    st.session_state.selected_book_key = int(selected_text.split('#')[1].split(' -')[0]) - 1
+                
                 selected = st.selectbox(
                     "Sélectionnez un livre détecté",
                     book_options,
-                    key='book_selector'
+                    index=st.session_state.selected_book_key,
+                    key='book_selector_widget',
+                    on_change=on_book_change
                 )
                 
-                book_idx = int(selected.split('#')[1].split(' -')[0]) - 1
-                st.session_state.selected_book_idx = book_idx
-                
+                book_idx = st.session_state.selected_book_key
                 ocr_data = ocr_results[book_idx]
                 
                 st.divider()
@@ -750,11 +755,11 @@ def main():
                         "Rechercher par :",
                         ["Titre uniquement", "Auteur uniquement", "Titre + Auteur (recommandé)", "Tous les champs"],
                         index=2,
-                        key='search_mode'
+                        key=f'search_mode_{book_idx}'
                     )
                     
                     # Bouton de recherche
-                    search_button = st.button("🔍 Chercher dans le stock", type="primary", use_container_width=True)
+                    search_button = st.button("🔍 Chercher dans le stock", type="primary", use_container_width=True, key=f'search_btn_{book_idx}')
                 
                 st.divider()
                 
@@ -781,6 +786,18 @@ def main():
                                 search_author = ocr_author
                                 search_publisher = ocr_publisher
                             
+                            # Normaliser les inputs
+                            norm_search_title = normalize_text(search_title) if search_title else ''
+                            norm_search_author = normalize_text(search_author) if search_author else ''
+                            norm_search_publisher = normalize_text(search_publisher) if search_publisher else ''
+                            
+                            # Afficher ce qui est recherché
+                            st.info(f"🔎 Recherche en cours : **{search_mode}**")
+                            if norm_search_title:
+                                st.caption(f"Titre normalisé : {norm_search_title}")
+                            if norm_search_author:
+                                st.caption(f"Auteur normalisé : {norm_search_author}")
+                            
                             # Rechercher Top 5
                             results = []
                             for _, row in stock_df.iterrows():
@@ -791,77 +808,76 @@ def main():
                                 # Calculer score selon mode
                                 score = 0
                                 
-                                if search_mode == "Titre uniquement" and search_title:
-                                    norm_title = normalize_text(search_title)
-                                    if norm_title:
-                                        score = max(
-                                            fuzz.ratio(norm_title, stock_title),
-                                            fuzz.partial_ratio(norm_title, stock_title),
-                                            fuzz.token_sort_ratio(norm_title, stock_title)
-                                        )
+                                if search_mode == "Titre uniquement" and norm_search_title:
+                                    if len(norm_search_title) < 3:
+                                        continue  # Ignorer les recherches trop courtes
+                                    score = max(
+                                        fuzz.ratio(norm_search_title, stock_title),
+                                        fuzz.partial_ratio(norm_search_title, stock_title),
+                                        fuzz.token_sort_ratio(norm_search_title, stock_title)
+                                    )
                                 
-                                elif search_mode == "Auteur uniquement" and search_author:
-                                    norm_author = normalize_text(search_author)
-                                    if norm_author:
-                                        score = max(
-                                            fuzz.ratio(norm_author, stock_author),
-                                            fuzz.token_set_ratio(norm_author, stock_author)
-                                        )
+                                elif search_mode == "Auteur uniquement" and norm_search_author:
+                                    if len(norm_search_author) < 3:
+                                        continue
+                                    score = max(
+                                        fuzz.ratio(norm_search_author, stock_author),
+                                        fuzz.partial_ratio(norm_search_author, stock_author),
+                                        fuzz.token_set_ratio(norm_search_author, stock_author)
+                                    )
                                 
                                 elif search_mode == "Titre + Auteur (recommandé)":
                                     title_score = 0
                                     author_score = 0
                                     
-                                    if search_title:
-                                        norm_title = normalize_text(search_title)
-                                        if norm_title:
-                                            title_score = max(
-                                                fuzz.ratio(norm_title, stock_title),
-                                                fuzz.partial_ratio(norm_title, stock_title),
-                                                fuzz.token_sort_ratio(norm_title, stock_title)
-                                            ) * 0.7
+                                    if norm_search_title and len(norm_search_title) >= 3:
+                                        title_score = max(
+                                            fuzz.ratio(norm_search_title, stock_title),
+                                            fuzz.partial_ratio(norm_search_title, stock_title),
+                                            fuzz.token_sort_ratio(norm_search_title, stock_title)
+                                        ) * 0.7
                                     
-                                    if search_author:
-                                        norm_author = normalize_text(search_author)
-                                        if norm_author:
-                                            author_score = max(
-                                                fuzz.ratio(norm_author, stock_author),
-                                                fuzz.token_set_ratio(norm_author, stock_author)
-                                            ) * 0.3
+                                    if norm_search_author and len(norm_search_author) >= 3:
+                                        author_score = max(
+                                            fuzz.ratio(norm_search_author, stock_author),
+                                            fuzz.partial_ratio(norm_search_author, stock_author),
+                                            fuzz.token_set_ratio(norm_search_author, stock_author)
+                                        ) * 0.3
                                     
-                                    score = title_score + author_score
+                                    # Si l'un des deux est vide, l'autre compte 100%
+                                    if norm_search_title and not norm_search_author:
+                                        score = title_score / 0.7
+                                    elif norm_search_author and not norm_search_title:
+                                        score = author_score / 0.3
+                                    else:
+                                        score = title_score + author_score
                                 
                                 else:  # Tous les champs
                                     title_score = 0
                                     author_score = 0
                                     publisher_score = 0
                                     
-                                    if search_title:
-                                        norm_title = normalize_text(search_title)
-                                        if norm_title:
-                                            title_score = max(
-                                                fuzz.ratio(norm_title, stock_title),
-                                                fuzz.partial_ratio(norm_title, stock_title),
-                                                fuzz.token_sort_ratio(norm_title, stock_title)
-                                            ) * 0.6
+                                    if norm_search_title and len(norm_search_title) >= 3:
+                                        title_score = max(
+                                            fuzz.ratio(norm_search_title, stock_title),
+                                            fuzz.partial_ratio(norm_search_title, stock_title),
+                                            fuzz.token_sort_ratio(norm_search_title, stock_title)
+                                        ) * 0.6
                                     
-                                    if search_author:
-                                        norm_author = normalize_text(search_author)
-                                        if norm_author:
-                                            author_score = max(
-                                                fuzz.ratio(norm_author, stock_author),
-                                                fuzz.token_set_ratio(norm_author, stock_author)
-                                            ) * 0.3
+                                    if norm_search_author and len(norm_search_author) >= 3:
+                                        author_score = max(
+                                            fuzz.ratio(norm_search_author, stock_author),
+                                            fuzz.partial_ratio(norm_search_author, stock_author),
+                                            fuzz.token_set_ratio(norm_search_author, stock_author)
+                                        ) * 0.3
                                     
-                                    if search_publisher:
-                                        norm_publisher = normalize_text(search_publisher)
-                                        if norm_publisher:
-                                            publisher_score = fuzz.partial_ratio(norm_publisher, stock_publisher) * 0.1
+                                    if norm_search_publisher and len(norm_search_publisher) >= 3:
+                                        publisher_score = fuzz.partial_ratio(norm_search_publisher, stock_publisher) * 0.1
                                     
                                     score = title_score + author_score + publisher_score
                                 
-                                # Ajouter si score > 30%
-                                if score >= 30:
+                                # Ajouter si score > 40% (seuil augmenté)
+                                if score >= 40:
                                     results.append({
                                         'score': score,
                                         'row': row
@@ -875,8 +891,16 @@ def main():
                             st.markdown(f"### 📊 Résultats (Top {len(top_results)})")
                             
                             if not top_results:
-                                st.warning("⚠️ Aucun résultat trouvé (score > 30%)")
+                                st.warning("⚠️ Aucun résultat trouvé (score > 40%)")
                                 st.caption("💡 Essayez un autre critère de recherche ou vérifiez les données OCR")
+                                
+                                # Debug info
+                                with st.expander("🔍 Debug - Pourquoi pas de résultats ?"):
+                                    st.text(f"Recherche effectuée avec :")
+                                    st.text(f"  Titre : '{norm_search_title}'")
+                                    st.text(f"  Auteur : '{norm_search_author}'")
+                                    st.text(f"  Longueur titre : {len(norm_search_title)}")
+                                    st.text(f"  Longueur auteur : {len(norm_search_author)}")
                             else:
                                 for rank, result in enumerate(top_results, 1):
                                     score = result['score']
